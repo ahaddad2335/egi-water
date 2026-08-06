@@ -1,5 +1,4 @@
-import fs from "node:fs";
-import path from "node:path";
+import { getRedis } from "@/lib/redis";
 
 export const CHALLENGE_LABELS: Record<string, string> = {
   "scada-ai-monitoring": "SCADA / AI Monitoring",
@@ -24,71 +23,49 @@ export type ContactSubmission = {
   emailError?: string;
 };
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const LOG_FILE = path.join(DATA_DIR, "contact-submissions.jsonl");
+const KEY = "egi:contact-submissions";
 
-// On serverless hosts (e.g. Vercel) the filesystem is read-only outside of
-// /tmp, and /tmp isn't shared or persistent across invocations. Every
-// filesystem call here is wrapped so a write failure never crashes the
-// request that triggered it — losing the safety-net log is far better than
-// the visitor seeing a failure for an email that actually sent.
-function ensureStoreExists(): boolean {
+function toSubmission(raw: unknown): ContactSubmission | null {
   try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+    const value = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (value && typeof value === "object" && "ts" in value) {
+      return value as ContactSubmission;
     }
-    if (!fs.existsSync(LOG_FILE)) {
-      fs.writeFileSync(LOG_FILE, "");
-    }
-    return true;
-  } catch (error) {
-    console.error("contact-store: filesystem unavailable, skipping.", error);
-    return false;
+    return null;
+  } catch {
+    return null;
   }
 }
 
 /** Safety net: always called regardless of whether the email actually sent,
  * so no inquiry is lost if Graph/email delivery hiccups. Never throws. */
-export function logContactSubmission(submission: ContactSubmission): void {
-  if (!ensureStoreExists()) return;
+export async function logContactSubmission(submission: ContactSubmission): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
   try {
-    fs.appendFileSync(LOG_FILE, JSON.stringify(submission) + "\n", "utf8");
+    await redis.zadd(KEY, { score: submission.ts, member: JSON.stringify(submission) });
   } catch (error) {
     console.error("contact-store: failed to log submission.", error);
   }
 }
 
-export function readContactSubmissions(sinceTs = 0): ContactSubmission[] {
-  if (!ensureStoreExists()) return [];
-
-  let raw: string;
+export async function readContactSubmissions(sinceTs = 0): Promise<ContactSubmission[]> {
+  const redis = getRedis();
+  if (!redis) return [];
   try {
-    raw = fs.readFileSync(LOG_FILE, "utf8");
+    const raw = await redis.zrange(KEY, sinceTs, "+inf", { byScore: true });
+    return raw.map(toSubmission).filter((s): s is ContactSubmission => s !== null);
   } catch (error) {
     console.error("contact-store: failed to read submissions.", error);
     return [];
   }
-  if (!raw.trim()) return [];
-
-  const submissions: ContactSubmission[] = [];
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const parsed = JSON.parse(line) as ContactSubmission;
-      if (parsed.ts >= sinceTs) submissions.push(parsed);
-    } catch {
-      // skip malformed lines rather than fail the whole read
-    }
-  }
-  return submissions;
 }
 
-export function pruneContactSubmissionsOlderThan(olderThanTs: number): void {
-  if (!ensureStoreExists()) return;
+export async function pruneContactSubmissionsOlderThan(olderThanTs: number): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
   try {
-    const kept = readContactSubmissions(olderThanTs);
-    const body = kept.map((s) => JSON.stringify(s)).join("\n");
-    fs.writeFileSync(LOG_FILE, body ? body + "\n" : "", "utf8");
+    await redis.zremrangebyscore(KEY, 0, olderThanTs);
   } catch (error) {
     console.error("contact-store: failed to prune old submissions.", error);
   }

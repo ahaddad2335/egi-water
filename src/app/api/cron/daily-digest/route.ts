@@ -62,9 +62,9 @@ export async function GET(request: NextRequest) {
   }
 
   const since = Date.now() - DAY_MS;
-  const events = readVisitEvents(since);
+  const events = await readVisitEvents(since);
   const sessions = summarizeSessions(events);
-  const contactSubmissions = readContactSubmissions(since);
+  const contactSubmissions = await readContactSubmissions(since);
 
   const totalPageviews = events.filter((e) => e.event === "pageview").length;
 
@@ -206,8 +206,8 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  pruneEventsOlderThan(Date.now() - RETENTION_DAYS * DAY_MS);
-  pruneContactSubmissionsOlderThan(Date.now() - RETENTION_DAYS * DAY_MS);
+  await pruneEventsOlderThan(Date.now() - RETENTION_DAYS * DAY_MS);
+  await pruneContactSubmissionsOlderThan(Date.now() - RETENTION_DAYS * DAY_MS);
 
   return NextResponse.json({
     ok: true,

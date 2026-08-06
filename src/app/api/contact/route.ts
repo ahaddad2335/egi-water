@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
 
   if (!alertTo) {
     console.error("ALERT_TO_EMAIL is not configured; cannot deliver contact lead.");
-    logContactSubmission({
+    await logContactSubmission({
       ...submissionBase,
       emailSent: false,
       emailError: "ALERT_TO_EMAIL is not configured.",
@@ -118,13 +118,13 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to send contact lead email:", error);
-    logContactSubmission({ ...submissionBase, emailSent: false, emailError: message });
+    await logContactSubmission({ ...submissionBase, emailSent: false, emailError: message });
     return NextResponse.json(
       { ok: false, error: "Failed to send. Please try again shortly." },
       { status: 502 },
     );
   }
 
-  logContactSubmission({ ...submissionBase, emailSent: true });
+  await logContactSubmission({ ...submissionBase, emailSent: true });
   return NextResponse.json({ ok: true });
 }

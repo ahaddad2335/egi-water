@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
   const ip = extractClientIp(request.headers);
   const country = await lookupCountry(ip);
 
-  appendVisitEvent({
+  await appendVisitEvent({
     ts: Date.now(),
     sessionId: payload.sessionId,
     ip,

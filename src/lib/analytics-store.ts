@@ -1,5 +1,4 @@
-import fs from "node:fs";
-import path from "node:path";
+import { getRedis } from "@/lib/redis";
 
 export type VisitEvent = {
   ts: number; // epoch ms
@@ -13,70 +12,50 @@ export type VisitEvent = {
   userAgent?: string;
 };
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const LOG_FILE = path.join(DATA_DIR, "visits.jsonl");
+const KEY = "egi:visits";
 
-// On serverless hosts (e.g. Vercel) the filesystem is read-only outside of
-// /tmp, and /tmp isn't shared or persistent across invocations. Every
-// filesystem call here is wrapped so a write failure never crashes the
-// request that triggered it — this store degrades to a no-op rather than
-// breaking page tracking or the contact form on that kind of host.
-function ensureStoreExists(): boolean {
+function toEvent(raw: unknown): VisitEvent | null {
   try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+    // @upstash/redis auto-parses JSON-looking strings, so a stored value may
+    // come back as an object already or as the original string.
+    const value = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (value && typeof value === "object" && "ts" in value) {
+      return value as VisitEvent;
     }
-    if (!fs.existsSync(LOG_FILE)) {
-      fs.writeFileSync(LOG_FILE, "");
-    }
-    return true;
-  } catch (error) {
-    console.error("analytics-store: filesystem unavailable, skipping.", error);
-    return false;
+    return null;
+  } catch {
+    return null;
   }
 }
 
-export function appendVisitEvent(event: VisitEvent): void {
-  if (!ensureStoreExists()) return;
+export async function appendVisitEvent(event: VisitEvent): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
   try {
-    fs.appendFileSync(LOG_FILE, JSON.stringify(event) + "\n", "utf8");
+    await redis.zadd(KEY, { score: event.ts, member: JSON.stringify(event) });
   } catch (error) {
     console.error("analytics-store: failed to append visit event.", error);
   }
 }
 
-export function readVisitEvents(sinceTs = 0): VisitEvent[] {
-  if (!ensureStoreExists()) return [];
-
-  let raw: string;
+export async function readVisitEvents(sinceTs = 0): Promise<VisitEvent[]> {
+  const redis = getRedis();
+  if (!redis) return [];
   try {
-    raw = fs.readFileSync(LOG_FILE, "utf8");
+    const raw = await redis.zrange(KEY, sinceTs, "+inf", { byScore: true });
+    return raw.map(toEvent).filter((e): e is VisitEvent => e !== null);
   } catch (error) {
     console.error("analytics-store: failed to read visit events.", error);
     return [];
   }
-  if (!raw.trim()) return [];
-
-  const events: VisitEvent[] = [];
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const parsed = JSON.parse(line) as VisitEvent;
-      if (parsed.ts >= sinceTs) events.push(parsed);
-    } catch {
-      // skip malformed lines rather than fail the whole read
-    }
-  }
-  return events;
 }
 
 /** Keep only events newer than `olderThanTs`, dropping everything before it. */
-export function pruneEventsOlderThan(olderThanTs: number): void {
-  if (!ensureStoreExists()) return;
+export async function pruneEventsOlderThan(olderThanTs: number): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
   try {
-    const kept = readVisitEvents(olderThanTs);
-    const body = kept.map((event) => JSON.stringify(event)).join("\n");
-    fs.writeFileSync(LOG_FILE, body ? body + "\n" : "", "utf8");
+    await redis.zremrangebyscore(KEY, 0, olderThanTs);
   } catch (error) {
     console.error("analytics-store: failed to prune old events.", error);
   }

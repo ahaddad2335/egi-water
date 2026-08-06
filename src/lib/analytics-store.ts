@@ -16,23 +16,45 @@ export type VisitEvent = {
 const DATA_DIR = path.join(process.cwd(), "data");
 const LOG_FILE = path.join(DATA_DIR, "visits.jsonl");
 
-function ensureStoreExists() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-  if (!fs.existsSync(LOG_FILE)) {
-    fs.writeFileSync(LOG_FILE, "");
+// On serverless hosts (e.g. Vercel) the filesystem is read-only outside of
+// /tmp, and /tmp isn't shared or persistent across invocations. Every
+// filesystem call here is wrapped so a write failure never crashes the
+// request that triggered it — this store degrades to a no-op rather than
+// breaking page tracking or the contact form on that kind of host.
+function ensureStoreExists(): boolean {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(LOG_FILE)) {
+      fs.writeFileSync(LOG_FILE, "");
+    }
+    return true;
+  } catch (error) {
+    console.error("analytics-store: filesystem unavailable, skipping.", error);
+    return false;
   }
 }
 
 export function appendVisitEvent(event: VisitEvent): void {
-  ensureStoreExists();
-  fs.appendFileSync(LOG_FILE, JSON.stringify(event) + "\n", "utf8");
+  if (!ensureStoreExists()) return;
+  try {
+    fs.appendFileSync(LOG_FILE, JSON.stringify(event) + "\n", "utf8");
+  } catch (error) {
+    console.error("analytics-store: failed to append visit event.", error);
+  }
 }
 
 export function readVisitEvents(sinceTs = 0): VisitEvent[] {
-  ensureStoreExists();
-  const raw = fs.readFileSync(LOG_FILE, "utf8");
+  if (!ensureStoreExists()) return [];
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(LOG_FILE, "utf8");
+  } catch (error) {
+    console.error("analytics-store: failed to read visit events.", error);
+    return [];
+  }
   if (!raw.trim()) return [];
 
   const events: VisitEvent[] = [];
@@ -50,10 +72,14 @@ export function readVisitEvents(sinceTs = 0): VisitEvent[] {
 
 /** Keep only events newer than `olderThanTs`, dropping everything before it. */
 export function pruneEventsOlderThan(olderThanTs: number): void {
-  ensureStoreExists();
-  const kept = readVisitEvents(olderThanTs);
-  const body = kept.map((event) => JSON.stringify(event)).join("\n");
-  fs.writeFileSync(LOG_FILE, body ? body + "\n" : "", "utf8");
+  if (!ensureStoreExists()) return;
+  try {
+    const kept = readVisitEvents(olderThanTs);
+    const body = kept.map((event) => JSON.stringify(event)).join("\n");
+    fs.writeFileSync(LOG_FILE, body ? body + "\n" : "", "utf8");
+  } catch (error) {
+    console.error("analytics-store: failed to prune old events.", error);
+  }
 }
 
 export type SessionSummary = {

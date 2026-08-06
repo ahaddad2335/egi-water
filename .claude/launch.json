@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "egi-water-dev",
+      "runtimeExecutable": "C:\\Users\\AAH\\AppData\\Local\\Programs\\Kimi\\resources\\resources\\runtime\\npm.cmd",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000
+    }
+  ]
+}

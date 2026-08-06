@@ -1,36 +1,72 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# EGI Water — Website
 
-## Getting Started
+Next.js (App Router) site for EGI / Ecomis Group Inc.
 
-First, run the development server:
+## Local development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Copy `.env.local.example` to `.env.local` and fill in the real values (never
+commit `.env.local` — it's gitignored). See that file for what each variable
+does. Short version:
 
-## Learn More
+- `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET` — from an Azure AD App
+  Registration with **Mail.Send** application permission (admin consent
+  granted). Steps:
+  1. [portal.azure.com](https://portal.azure.com) → **Azure Active
+     Directory** → **App registrations** → **New registration**.
+  2. Copy the **Application (client) ID** and **Directory (tenant) ID** from
+     the app's overview page.
+  3. **Certificates & secrets** → **New client secret** → copy the secret
+     **value** immediately (it's hidden after you leave the page).
+  4. **API permissions** → **Add a permission** → **Microsoft Graph** →
+     **Application permissions** → add **Mail.Send**.
+  5. Click **Grant admin consent** (requires a Microsoft 365 admin).
+- `MS_SENDER_EMAIL` — the mailbox emails are sent from (`egisupport@4ecomis.com`).
+- `ALERT_TO_EMAIL` — where contact-form leads and the daily digest are sent.
+- `CRON_SECRET` — random string that authorizes the daily digest endpoint.
+- `REPORT_TIMEZONE` — timezone used for timestamps in the digest email.
 
-To learn more about Next.js, take a look at the following resources:
+## What's built in
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Visitor analytics** (`src/components/analytics/visitor-tracker.tsx` +
+  `/api/track`): invisible, no UI. Logs pageviews and time-on-page per
+  session, plus IP address and country, to `data/visits.jsonl` on the
+  server. Not visible to site visitors.
+- **Contact form** (`/api/contact`): sends an email instantly to
+  `ALERT_TO_EMAIL` whenever someone submits the form.
+- **Daily traffic digest** (`/api/cron/daily-digest`): summarizes the last
+  24 hours (sessions, pageviews, top pages, per-session IP/country/pages/
+  duration) into one email, sent once a day. Requires an external scheduler
+  to actually call it once every 24 hours — see below.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Deploying on Hostinger
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. **Confirm your plan supports Node.js.** VPS plans always do. Business/
+   Cloud shared plans may have a **Node.js app** feature under hPanel →
+   Advanced — check there first. Plain shared hosting (no Node.js option)
+   cannot run this site's backend (tracking, contact form, digest) at all;
+   it would need to be exported as static HTML and lose those features.
+2. **Deploy the code** — either `git clone` + `npm install` + `npm run
+   build` + `npm start` on a VPS (behind Nginx/PM2), or via hPanel's Node.js
+   app + Git deploy feature on a Business/Cloud plan.
+3. **Set the environment variables** from `.env.local.example` in whatever
+   env-var UI your Hostinger plan provides (hPanel's Node.js app settings,
+   or a `.env.local` file alongside the app on a VPS).
+4. **Schedule the daily digest.** In hPanel → Advanced → **Cron Jobs**, add
+   a daily job that hits:
+   ```
+   curl "https://yourdomain.com/api/cron/daily-digest?token=YOUR_CRON_SECRET"
+   ```
+   Pick whatever time of day you want the digest to land (e.g. 7:00 AM).
+5. **Make sure `data/` persists** across deploys/restarts (it's a plain
+   folder on disk — fine on a VPS or persistent Node app; if your plan ever
+   moves to a serverless/ephemeral runtime, this would need to move to a
+   real database instead).

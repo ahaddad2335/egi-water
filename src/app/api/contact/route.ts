@@ -13,6 +13,7 @@ type ContactPayload = {
   phone?: string;
   challenge?: string;
   description?: string;
+  turnstileToken?: string;
 };
 
 function escapeHtml(value: string): string {
@@ -23,12 +24,56 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+async function verifyTurnstileToken(token: string): Promise<boolean> {
+  const secretKey = process.env.TURNSTILE_SECRET_KEY;
+  if (!secretKey) {
+    console.error("TURNSTILE_SECRET_KEY is not configured");
+    return false;
+  }
+
+  try {
+    const response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        secret: secretKey,
+        response: token,
+      }),
+    });
+
+    const data = await response.json();
+    return data.success === true;
+  } catch (error) {
+    console.error("Turnstile verification error:", error);
+    return false;
+  }
+}
+
 export async function POST(request: NextRequest) {
   let payload: ContactPayload;
   try {
     payload = await request.json();
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request" }, { status: 400 });
+  }
+
+  // Verify Turnstile token
+  const turnstileToken = payload.turnstileToken;
+  if (!turnstileToken) {
+    return NextResponse.json(
+      { ok: false, error: "Turnstile verification token is missing" },
+      { status: 400 },
+    );
+  }
+
+  const isValidToken = await verifyTurnstileToken(turnstileToken);
+  if (!isValidToken) {
+    return NextResponse.json(
+      { ok: false, error: "Verification failed. Please try again." },
+      { status: 400 },
+    );
   }
 
   const required: (keyof ContactPayload)[] = [
@@ -52,8 +97,6 @@ export async function POST(request: NextRequest) {
   const country = await lookupCountry(ip);
   const challengeLabel = CHALLENGE_LABELS[payload.challenge!] ?? payload.challenge;
 
-  // Safety-net record, saved regardless of whether the email below actually
-  // sends — so an inquiry is never silently lost to an email hiccup.
   const submissionBase = {
     ts: Date.now(),
     name: payload.name!,

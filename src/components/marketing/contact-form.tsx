@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { CheckCircle2, AlertCircle } from "lucide-react";
+import { Turnstile } from "@marsidev/react-turnstile";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -27,11 +28,20 @@ export function ContactForm() {
   const [consent, setConsent] = useState(false);
   const [status, setStatus] = useState<"idle" | "sending" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const turnstileRef = useRef<any>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setStatus("sending");
     setErrorMessage(null);
+
+    // Get Turnstile token
+    const token = turnstileRef.current?.getResponse();
+    if (!token) {
+      setStatus("error");
+      setErrorMessage("Please complete the verification");
+      return;
+    }
 
     const form = event.currentTarget;
     const data = new FormData(form);
@@ -43,6 +53,7 @@ export function ContactForm() {
       phone: data.get("phone")?.toString() ?? "",
       challenge: data.get("challenge")?.toString() ?? "",
       description: data.get("description")?.toString() ?? "",
+      turnstileToken: token,
     };
 
     try {
@@ -63,6 +74,7 @@ export function ContactForm() {
           ? error.message
           : "Something went wrong. Please try again.",
       );
+      turnstileRef.current?.reset();
     }
   }
 
@@ -167,6 +179,18 @@ export function ContactForm() {
         </span>
       </label>
 
+      {/* Cloudflare Turnstile Widget */}
+      <div className="flex justify-center">
+        <Turnstile
+          ref={turnstileRef}
+          siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || ""}
+          onError={() => {
+            setStatus("error");
+            setErrorMessage("Verification failed. Please try again.");
+          }}
+        />
+      </div>
+
       {status === "error" && errorMessage && (
         <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -179,7 +203,7 @@ export function ContactForm() {
         disabled={status === "sending"}
         className="w-full sm:w-auto"
       >
-        {status === "sending" ? "Sending…" : "Send Inquiry"}
+        {status === "sending"} ? "Sending…" : "Send Inquiry"}
       </Button>
     </form>
   );

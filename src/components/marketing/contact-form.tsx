@@ -203,7 +203,7 @@ export function ContactForm() {
         disabled={status === "sending"}
         className="w-full sm:w-auto"
       >
-        {status === "sending"} ? "Sending…" : "Send Inquiry"}
+        {status === "sending" ? "Sending…" : "Send Inquiry"}
       </Button>
     </form>
   );
